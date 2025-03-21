@@ -28,7 +28,7 @@ sessions_collection = db["study_sessions"]
 fs = GridFS(db)  # Initialize GridFS
 
 # 🔹 API Endpoints
-API_URL = "http://localhost:8000/tasks"
+API_URL = "http://localhost:8000/tasks"#aaaa
 LOGIN_URL = "http://localhost:8000/login"
 UPDATE_PROGRESS_URL = "http://localhost:8000/update_progress"
 
