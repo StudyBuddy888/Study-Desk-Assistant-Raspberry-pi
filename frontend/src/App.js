@@ -11,6 +11,7 @@ function App() {
     const [tasks, setTasks] = useState([]);
     const [task, setTask] = useState("");
     const [taskSchedule, setTaskSchedule] = useState("");
+    const [taskEndTime, setTaskEndTime] = useState("");
     const [status, setStatus] = useState("pending");
     const [isRegistering, setIsRegistering] = useState(false);
     const [activeSection, setActiveSection] = useState("dashboard");
@@ -53,17 +54,17 @@ function App() {
         }
     }, [token]);
       // Add this new fetchUserProfile function after your existing fetch functions
-const fetchUserProfile = useCallback(async () => {
-    if (!token) return;
-    try {
-        const response = await api.get("/user/profile", {
-            headers: { Authorization: `Bearer ${token}` }
-        });
-        setUser({ name: response.data.username }); // Setting username as name
-    } catch (error) {
-        console.error("Failed to fetch user profile:", error);
-    }
-}, [token]);
+    const fetchUserProfile = useCallback(async () => {
+        if (!token) return;
+        try {
+            const response = await api.get("/user/profile", {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setUser({ name: response.data.username }); // Setting username as name
+        } catch (error) {
+            console.error("Failed to fetch user profile:", error);
+        }
+    }, [token]);
 
    // Update the existing useEffect
 useEffect(() => {
@@ -85,19 +86,19 @@ useEffect(() => {
     };
 
     // Modify the existing loginUser function
-const loginUser = async () => {
-    try {
-        const response = await api.post("/login", { email, password });
-        const userToken = response.data.access_token;
-        setToken(userToken);
-        localStorage.setItem("token", userToken);
-        alert("Login successful!");
-        await fetchUserProfile(); // Add this line to fetch user profile
-        fetchTasks();
-    } catch (error) {
-        alert("Error: " + (error.response?.data?.detail || "Login failed"));
-    }
-};
+    const loginUser = async () => {
+        try {
+            const response = await api.post("/login", { email, password });
+            const userToken = response.data.access_token;
+            setToken(userToken);
+            localStorage.setItem("token", userToken);
+            alert("Login successful!");
+            await fetchUserProfile(); // Add this line to fetch user profile
+            fetchTasks();
+        } catch (error) {
+            alert("Error: " + (error.response?.data?.detail || "Login failed"));
+        }
+    };
 
     const logoutUser = () => {
         setToken(null);
@@ -135,16 +136,27 @@ const loginUser = async () => {
 
     const addTask = async () => {
         try {
-            await api.post("/add-task", { task_schedule: taskSchedule, task, status }, {
+            await api.post("/add-task", { 
+                task_schedule: taskSchedule,
+                task:task,
+                end_time: taskEndTime, 
+                status:status }, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             alert("Task added successfully!");
             fetchTasks();
             setTask("");
             setTaskSchedule("");
+            setTaskEndTime("");
         } catch (error) {
             console.error("Task Error:", error.response?.data?.detail || error.message);
             alert("Failed to add task.");
+        }
+    };
+    const handleSectionChange = (section) => {
+        setActiveSection(section);
+        if (section === "dashboard") {
+            fetchTasks();
         }
     };
 
@@ -256,9 +268,10 @@ const addSession = async () => {
                 </div>
                 <button 
                     className={activeSection === "dashboard" ? "active" : ""} 
-                    onClick={() => setActiveSection("dashboard")}
+                    onClick={() => handleSectionChange("dashboard")}
                 >
                     Dashboard
+                    
                 </button>
                 <button 
                     className={activeSection === "tasks" ? "active" : ""} 
@@ -285,6 +298,32 @@ const addSession = async () => {
                 {activeSection === "dashboard" && (
                     <div className="dashboard-section">
                         <h2>Today's Study Sessions</h2>
+                        <h2>Welcome, {user?.name || "User"}</h2>
+                        <h3>Task Overview</h3>
+                        <table className="task-table">
+                            <thead>
+                                <tr>
+                                    <th>Task</th>
+                                    <th>Scheduled Time</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {tasks.length > 0 ? (
+                                    tasks.map((task) => (
+                                        <tr key={task._id}>
+                                            <td>{task.task}</td>
+                                            <td>{new Date(task.task_schedule).toLocaleString()}</td>
+                                            <td>{task.status}</td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    <tr>
+                                        <td colSpan="3">No tasks available.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
                         <div className="sessions-grid">
                             {sessions.filter(session => 
                                 new Date(session.startTime).toDateString() === new Date().toDateString()
@@ -310,6 +349,7 @@ const addSession = async () => {
                         <div className="add-task-form">
                             <input type="text" placeholder="Task" value={task} onChange={(e) => setTask(e.target.value)} />
                             <input type="datetime-local" value={taskSchedule} onChange={(e) => setTaskSchedule(e.target.value)} />
+                            <input type="datetime-local" value={taskEndTime} onChange={(e) => setTaskEndTime(e.target.value)} />
                             <select value={status} onChange={(e) => setStatus(e.target.value)}>
                                 <option value="pending">Pending</option>
                                 <option value="incomplete">Incomplete</option>
@@ -326,6 +366,7 @@ const addSession = async () => {
                                             <h4>{task.task}</h4>
                                             <p>Status: {task.status}</p>
                                             <p>Schedule: {new Date(task.task_schedule).toLocaleString()}</p>
+                                            <p>End Time: {task.end_time ? new Date(task.end_time).toLocaleString() : "Not set"}</p>
                                         </div>
                                         <div className="task-actions">
                                             <button onClick={() => updateTaskStatus(task._id, "completed")} className="btn">Complete</button>
