@@ -4,7 +4,7 @@ import "./App.css";
 
 function App() {
     // Original state variables
-    const [email, setEmail] = useState("");
+    const [email, setEmail] = useState("");//added
     const [password, setPassword] = useState("");
     const [username, setUsername] = useState("");
     const [token, setToken] = useState(localStorage.getItem("token") || null);
