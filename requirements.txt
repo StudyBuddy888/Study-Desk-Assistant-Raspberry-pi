@@ -10,4 +10,4 @@ numpy
 pyttsx3
 SpeechRecognition
 pymongo
-openai
+google-generativeai
