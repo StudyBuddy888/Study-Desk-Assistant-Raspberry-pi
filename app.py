@@ -7,93 +7,74 @@ import numpy as np
 import pyttsx3
 import speech_recognition as sr
 from pymongo import MongoClient
-import openai
-from gridfs import GridFS
-import os
-from bson.binary import Binary
-import io
-import zlib
+import google.generativeai as genai
 
-
-
-# 🔹 MongoDB Setup
+# MongoDB Setup
 # MONGO_URI = "mongodb+srv://Studybuddy:Paav1234@studydeskcluster.lmi3g.mongodb.net/?retryWrites=true&w=majority&appName=StudyDeskCluster"
-MONGO_URI = "mongodb+srv://Studybuddy:.lmi3g.mongodb.net/?retryWrites=true&w=majority&appName=StudyDeskCluster"
+MONGO_URI = "mongodb+srv://Studybuddy:@studydeskcluster.lmi3g.mongodb.net/?retryWrites=true&w=majority&appName=StudyDeskCluster"
 client = MongoClient(MONGO_URI)
 db = client["study_tracker"]
 users_collection = db["users"]
 sessions_collection = db["study_sessions"]
 
-# Add after MongoDB setup
-fs = GridFS(db)  # Initialize GridFS
-
-# 🔹 API Endpoints
-API_URL = "http://localhost:8000/tasks"#aaaa
+# API Endpoints
+API_URL = "http://localhost:8000/tasks"
 LOGIN_URL = "http://localhost:8000/login"
 UPDATE_PROGRESS_URL = "http://localhost:8000/update_progress"
 
-# 🔹 Initialize Text-to-Speech
-engine = pyttsx3.init()
-openai.api_key = "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"  # Replace with a valid OpenAI API Key
-
-# 🔹 Load Face Recognizer
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-
-def compress_video(input_path):
-    """Compress video file using OpenCV"""
+# Update TTS initialization
+def init_tts():
+    """Initialize Text-to-Speech engine"""
     try:
-        temp_output = f"compressed_{os.path.basename(input_path)}"
-        cap = cv2.VideoCapture(input_path)
-        
-        # Lower resolution and fps for compression
-        width = 320
-        height = 240
-        fps = 10
-        
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
-        
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-                
-            # Resize frame for compression
-            resized = cv2.resize(frame, (width, height))
-            out.write(resized)
-            
-        cap.release()
-        out.release()
-        
-        return temp_output
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)
+        engine.setProperty('volume', 1.0)
+        voices = engine.getProperty('voices')
+        engine.setProperty('voice', voices[0].id)
+        return engine
     except Exception as e:
-        print(f"[ERROR] Video compression failed: {str(e)}")
+        print(f"[ERROR] Failed to initialize TTS: {str(e)}")
         return None
-    
-# ✅ Speak Function
+
+# Modified speak function with better run loop handling
 def speak(text):
-    """Convert text to speech with error handling."""
+    """Convert text to speech with proper cleanup."""
+    global engine
     print(f"[VOICE] {text}")
-    max_retries = 3
-    for attempt in range(max_retries):
+    
+    try:
+        # Create new engine instance for each speak call
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)
+        engine.setProperty('volume', 1.0)
+        engine.say(text)
+        engine.runAndWait()
+        engine.stop()
+        return True
+    except Exception as e:
+        print(f"[ERROR] TTS error: {str(e)}")
         try:
-            engine.say(text)
-            engine.runAndWait()
-            return
-        except RuntimeError as e:
-            print(f"[WARNING] TTS Engine busy (attempt {attempt + 1}/{max_retries})")
-            time.sleep(1)  # Wait before retry
-            try:
-                engine.endLoop()  # Try to end existing loop
-            except:
-                pass
-            
-            if attempt == max_retries - 1:
-                print(f"[ERROR] Failed to speak after {max_retries} attempts: {str(e)}")
-                return
-            
+            engine.stop()
+        except:
+            pass
+        time.sleep(0.1)
+        return False
+
+# Global TTS engine
+engine = init_tts()
+
+#GEMINI_API_KEY = "AIzaSyAAbC20bXG1giPijXyoIT_qlwmwINZ3ZgI"  # Replace with your Google AI Studio API key
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Initialize the model once globally
+model = genai.GenerativeModel('gemini-2.0-flash')
+session_active = False
+# Load Face Recognizer
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    
 def check_task_reminders():
     """Check and remind about scheduled tasks"""
+    global session_active
     print("[INFO] Task reminder system activated")
     while True:
         try:
@@ -125,21 +106,12 @@ def check_task_reminders():
                 )
             
             # Process current time tasks
-            for task in current_tasks:
-                print(f"[DEBUG] Task starting now: {task['task']}")
-                speak(f"Your task '{task['task']}' is starting now!")
-                # Update status to in-progress
-                db["tasks"].update_one(
-                    {"_id": task["_id"]},
-                    {"$set": {"status": "in-progress"}}
-                )
-
-            print(f"[DEBUG] Current time: {current_time_str}, Checking for tasks at: {reminder_time}")
 
         except Exception as e:
             print(f"[ERROR] Task reminder check failed: {str(e)}")
         
         time.sleep(15)
+
 def wait_for_scheduled_task(token):
     """Wait for the next scheduled task"""
     while True:
@@ -168,7 +140,7 @@ def wait_for_scheduled_task(token):
             print("[INFO] No scheduled tasks found")
             time.sleep(60)
 
-# ✅ Update Study Progress
+# Update Study Progress
 def update_progress(email, study_time, distraction_time, status):
     """Store study session details in MongoDB Atlas."""
     try:
@@ -190,7 +162,7 @@ def update_progress(email, study_time, distraction_time, status):
         print(f"[ERROR] Failed to store session data: {str(e)}")
         return False
 
-# ✅ Face Recognition
+# Face Recognition
 def recognize_face():
     """Recognize user before starting session."""
     cap = cv2.VideoCapture(0)
@@ -212,7 +184,7 @@ def recognize_face():
     cap.release()
     return True
 
-# ✅ Listen to User
+# Listen to User
 def listen(timeout=10):
     """Capture and recognize voice input."""
     recognizer = sr.Recognizer()
@@ -232,147 +204,92 @@ def listen(timeout=10):
             return None
     return None
 
-# ✅ OpenAI Chatbot
-def openai_answer(query):
-    """Get response from OpenAI ChatGPT."""
+
+
+def gemini_answer(query):
+    """Get response from Google Gemini."""
     if not query:
         return "I couldn't understand your question. Please try again."
 
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": query}]
-        )
-        answer = response['choices'][0]['message']['content']
-        print(f" ChatGPT Answer: {answer}")
-        return answer
+        # Keep model initialization simple
+        response = model.generate_content(f"Answer this question briefly: {query}")
+        
+        if hasattr(response, 'text'):
+            answer = response.text.strip()[:200]  # Shorter responses
+            return answer
+        return "Sorry, I couldn't generate a proper response."
+            
     except Exception as e:
-        print(f"OpenAI API Error: {e}")
+        print(f"[ERROR] Gemini API Error: {e}")
         return "Sorry, I couldn't fetch an answer right now."
 
-# ✅ Track Distraction & Study Time
+# Track Distraction & Study Time
 def track_distraction(session_duration, user_email, task_name):
-    """Monitor distractions and record session."""
+    """Monitor distractions during study session."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("[ERROR] Could not open video capture")
         return None, None, "Failed"
 
-    # Video recording setup with compression settings
-    frame_width = 320  # Reduced width for smaller file size
-    frame_height = 240  # Reduced height for smaller file size
-    fps = 10  # Reduced FPS for smaller file size
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_video_path = f'session_{timestamp}.avi'
-    
-    out = cv2.VideoWriter(
-        temp_video_path,
-        cv2.VideoWriter_fourcc(*'XVID'),
-        fps,
-        (frame_width, frame_height)
-    )
-    
-    print("[INFO] Starting video recording...")
-    
-    # Initialize tracking variables
     last_seen = time.time()
     distraction_time = 0
     study_start = time.time()
     eyes_closed_start = None
-    reminder_sent = False
-    session_end_time = study_start + session_duration
+    last_voice_prompt = 0
+    VOICE_PROMPT_DELAY = 60  # Minimum seconds between voice prompts
 
     try:
         while time.time() - study_start < session_duration:
             ret, frame = cap.read()
             if not ret:
-                print("[ERROR] Failed to capture frame")
                 continue
-            
-            # Resize frame for compression
-            resized_frame = cv2.resize(frame, (frame_width, frame_height))
-            out.write(resized_frame)
 
-            gray = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
 
-            # Check for session end warning
-            time_remaining = session_end_time - time.time()
-            if time_remaining <= 120 and not reminder_sent:
-                current_study_time = (time.time() - study_start) // 60
-                current_distraction = distraction_time // 60
-                speak(f"Two minutes remaining. You've studied for {current_study_time:.0f} minutes.")
-                reminder_sent = True
-
+            current_time = time.time()
             if len(faces) > 0:
-                last_seen = time.time()
+                last_seen = current_time
                 eyes_closed_start = None
                 print("[INFO] User is focused.")
             else:
-                if time.time() - last_seen > 30:
-                    speak("You seem distracted! Focus on your studies.")
-                    distraction_time += time.time() - last_seen
-                    last_seen = time.time()
+                if current_time - last_seen > 30 and current_time - last_voice_prompt > VOICE_PROMPT_DELAY:
+                    if speak("You seem distracted! Focus on your studies."):
+                        distraction_time += current_time - last_seen
+                        last_seen = current_time
+                        last_voice_prompt = current_time
 
-                if eyes_closed_start is None:
-                    eyes_closed_start = time.time()
-                elif time.time() - eyes_closed_start > 60:
-                    speak("Wake up! Open your eyes.")
-                elif time.time() - eyes_closed_start > 120:
-                    speak("Session stopped due to inactivity.")
-                    break
+            # Voice command handling with improved timing
+            if current_time - last_voice_prompt > 5:
+                query = listen()
+                if query and "hey buddy" in query:
+                    if speak("Yes, how can I help you?"):
+                        question = listen()
+                        if question:
+                            if "distracted time" in question:
+                                speak(f"You have been distracted for {distraction_time // 60} minutes.")
+                            else:
+                                answer = gemini_answer(question)
+                                speak(answer)
+                            last_voice_prompt = current_time + 2  # Add delay after response
 
-            print("[INFO] Checking for 'Hey Buddy'...")
-            query = listen()
-            if query and "hey buddy" in query:
-                speak("Yes, how can I help you?")
-                question = listen()
-                if question:
-                    if "distracted time" in question:
-                        speak(f"You have been distracted for {distraction_time // 60} minutes.")
-                    else:
-                        answer = openai_answer(question)
-                        speak(answer)
-
-            time.sleep(1)  # Reduced sleep time
+            time.sleep(0.1)
 
     except Exception as e:
-        print(f"[ERROR] Session recording error: {str(e)}")
+        print(f"[ERROR] Session error: {str(e)}")
+        return None, None, "Failed"
     finally:
-        # Cleanup video recording
         cap.release()
-        out.release()
-        
-        # Store video in MongoDB
-        try:
-            print("[INFO] Processing and storing session video...")
-            with open(temp_video_path, 'rb') as video_file:
-                file_id = fs.put(
-                    video_file,
-                    filename=f"session_{timestamp}.avi",
-                    metadata={
-                        "user_email": user_email,
-                        "task_name": task_name,
-                        "duration_minutes": session_duration // 60,
-                        "timestamp": datetime.now(),
-                        "study_time": (time.time() - study_start) // 60,
-                        "distraction_time": distraction_time // 60
-                    }
-                )
-            print(f"[INFO] Video stored successfully with ID: {file_id}")
-            
-            # Clean up temporary file
-            os.remove(temp_video_path)
-            print("[INFO] Temporary video file cleaned up")
-            
-        except Exception as e:
-            print(f"[ERROR] Failed to store session video: {str(e)}")
 
     study_time = time.time() - study_start
-    status = "Completed" if distraction_time < study_time * 0.3 else "Partially Completed"
+    effective_study_time = study_time - distraction_time
+    focus_percentage = (effective_study_time / study_time) * 100 if study_time > 0 else 0
+    status = "Completed" if focus_percentage >= 75 else "Partially Completed"
+    
     return study_time, distraction_time, status
 
-# ✅ Login and Fetch User
+# Login and Fetch User
 def login_and_get_token():
     """Authenticate the most recently registered user."""
     latest_user = users_collection.find_one({}, sort=[("_id", -1)])
@@ -400,7 +317,7 @@ def login_and_get_token():
         else:
             speak("Login failed. Please try again.")
 
-# ✅ Main Execution
+#  Main Execution
 if __name__ == "__main__":
     print(" Assistant is starting...")
 
@@ -426,7 +343,7 @@ if __name__ == "__main__":
             user["email"],
             current_task["task"]
         )
-        speak(f"Session ended! You studied for {study_time // 60} minutes.")
+        speak(f"Session ended! You studied for {study_time // 60} minutes and were distracted for {distraction_time // 60} minutes.")
         update_progress(user["email"], study_time, distraction_time, status)
         if status == "Completed":
             speak("Great job staying focused!")
